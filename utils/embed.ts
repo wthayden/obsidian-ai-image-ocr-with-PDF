@@ -34,7 +34,27 @@ export function findRelevantImageEmbed(editor: Editor): {
       return { link, isExternal: /^https?:\/\//i.test(link), embedType: "external", embedText: match[0] };
     }
   }
+  // Search upward from cursor
   for (let i = editor.getCursor().line; i >= 0; i--) {
+    const line = editor.getLine(i);
+    let embedMatch = line.match(/!\[\[(.+?)\]\]/);
+    if (embedMatch) {
+      const link = embedMatch[1].split("|")[0].trim();
+      if (isImage(link)) {
+        return { link, isExternal: false, embedType: "internal", embedText: embedMatch[0] };
+      }
+    }
+    embedMatch = line.match(/!\[.*?\]\((.+?)\)/);
+    if (embedMatch) {
+      const link = embedMatch[1].split(" ")[0].replace(/["']/g, "");
+      if (isImage(link)) {
+        return { link, isExternal: /^https?:\/\//i.test(link), embedType: "external", embedText: embedMatch[0] };
+      }
+    }
+  }
+  // Search downward from cursor if not found above
+  const lineCount = editor.lineCount();
+  for (let i = editor.getCursor().line + 1; i < lineCount; i++) {
     const line = editor.getLine(i);
     let embedMatch = line.match(/!\[\[(.+?)\]\]/);
     if (embedMatch) {
