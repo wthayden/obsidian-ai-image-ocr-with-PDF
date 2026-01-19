@@ -7,8 +7,8 @@
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { pluginLog, pluginLogger } from "./log";
 
-// Disable web worker - process in main thread for Electron compatibility
-pdfjsLib.GlobalWorkerOptions.workerSrc = "";
+// Configure PDF.js worker - must use explicit HTTPS for Electron
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 export interface PDFPageImage {
   pageNumber: number;
