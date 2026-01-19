@@ -3,11 +3,11 @@
 // This software is released under the MIT License.
 // https://opensource.org/licenses/MIT
 
-import * as pdfjsLib from "pdfjs-dist";
+// Use legacy build for better CommonJS/esbuild compatibility
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { pluginLog, pluginLogger } from "./log";
 
-// Disable web worker - process in main thread for reliability in Electron/Obsidian
-// Protocol-relative URLs don't work in Electron (app: protocol)
+// Disable web worker - process in main thread for Electron compatibility
 pdfjsLib.GlobalWorkerOptions.workerSrc = "";
 
 export interface PDFPageImage {
@@ -57,15 +57,25 @@ export async function convertPdfToImages(
   maxPages: number = 50
 ): Promise<PDFPageImage[]> {
   pluginLogger(`Converting PDF to images (scale: ${scale}, maxPages: ${maxPages})`);
+  pluginLogger(`Buffer size: ${buffer.byteLength} bytes`);
+
+  // Convert ArrayBuffer to Uint8Array for PDF.js compatibility
+  const uint8Array = new Uint8Array(buffer);
+  pluginLogger(`Uint8Array length: ${uint8Array.length}`);
 
   let pdf;
   try {
-    pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+    pdf = await loadingTask.promise;
+    pluginLogger(`PDF loaded successfully, pages: ${pdf.numPages}`);
   } catch (err) {
-    if (err instanceof Error && err.message.includes("password")) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    pluginLog(`PDF.js error: ${errMsg}`, "error", true);
+    console.error("PDF.js loading error:", err);
+    if (errMsg.includes("password")) {
       throw new PDFEncryptedError("PDF is password protected");
     }
-    throw new PDFCorruptedError(`Failed to load PDF: ${err}`);
+    throw new PDFCorruptedError(`Failed to load PDF: ${errMsg}`);
   }
 
   const totalPages = pdf.numPages;
