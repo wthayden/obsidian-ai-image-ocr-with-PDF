@@ -10,6 +10,7 @@ import {
   MarkdownView,
   MarkdownFileInfo,
   Editor,
+  Menu,
 } from "obsidian";
 import {
   GPTImageOCRSettings,
@@ -285,6 +286,64 @@ export default class GPTImageOCRPlugin extends Plugin {
 
 
     this.addSettingTab(new GPTImageOCRSettingTab(this.app, this));
+
+    // --- Right-click context menu on files in file explorer ---
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu: Menu, file) => {
+        // Only show for images and PDFs
+        if (file instanceof TFile && /\.(png|jpe?g|gif|webp|bmp|svg|pdf)$/i.test(file.extension)) {
+          menu.addItem((item) => {
+            item
+              .setTitle("Extract text using AI OCR")
+              .setIcon("scan")
+              .onClick(() => this.runOCROnFile(file));
+          });
+        }
+      })
+    );
+
+    // --- Right-click context menu in editor ---
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor, view: MarkdownView) => {
+        // Try to find an image embed near cursor
+        let embed = findRelevantImageEmbed(editor);
+        if (!embed) {
+          embed = findImageEmbedFromCache(this.app, view.file);
+        }
+
+        if (embed) {
+          menu.addItem((item) => {
+            item
+              .setTitle("Extract text using AI OCR")
+              .setIcon("scan")
+              .onClick(async () => {
+                // Trigger the existing embedded image OCR command
+                (this.app as any).commands.executeCommandById("ai-image-ocr:extract-text-from-embedded-image");
+              });
+          });
+        }
+      })
+    );
+
+    // --- Ribbon icon for quick OCR access ---
+    this.addRibbonIcon("scan", "Extract text using AI OCR", async () => {
+      // Try to run on embedded image in current editor
+      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (view) {
+        const editor = view.editor;
+        let embed = findRelevantImageEmbed(editor);
+        if (!embed) {
+          embed = findImageEmbedFromCache(this.app, view.file);
+        }
+        if (embed) {
+          (this.app as any).commands.executeCommandById("ai-image-ocr:extract-text-from-embedded-image");
+          return;
+        }
+      }
+      // Fallback: prompt to select a file
+      (this.app as any).commands.executeCommandById("ai-image-ocr:extract-text-from-image");
+    });
+
     pluginLogger("Plugin loaded");
   }
 
@@ -652,6 +711,188 @@ Repeat this for each image.
     const editor = activeView.editor;
     editor.replaceSelection(text + "\n");
     pluginLogger("Output inserted into editor");
+  }
+
+  /**
+   * Run OCR on a file directly (for context menu and ribbon icon)
+   */
+  async runOCROnFile(file: TFile): Promise<void> {
+    pluginLogger(`Running OCR on file: ${file.path}`);
+
+    const arrayBuffer = await this.app.vault.readBinary(file);
+
+    // Check if it's a PDF
+    if (isPdfFile(file.name) || isPdfBuffer(arrayBuffer)) {
+      const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+      const editor = activeView?.editor;
+      if (editor && activeView) {
+        await this.processPdfFile(arrayBuffer, file.path, editor, activeView);
+      } else {
+        // No active editor - process PDF and create new note
+        await this.processPdfFileToNote(arrayBuffer, file);
+      }
+      return;
+    }
+
+    // Process as image
+    const base64 = arrayBufferToBase64(arrayBuffer);
+    const dims = await getImageDimensionsFromArrayBuffer(arrayBuffer);
+    const provider = this.getProvider();
+    const providerId = this.settings.provider;
+    const modelId = (provider as any).model;
+    const providerName = getFriendlyProviderNames(this.settings)[providerId];
+    let modelName = FRIENDLY_MODEL_NAMES[modelId] || modelId;
+    if (providerId === "ollama" && this.settings.ollamaModelFriendlyName?.trim()) {
+      modelName = this.settings.ollamaModelFriendlyName.trim();
+    } else if (providerId === "lmstudio" && this.settings.lmstudioModelFriendlyName?.trim()) {
+      modelName = this.settings.lmstudioModelFriendlyName.trim();
+    } else if (providerId === "custom" && this.settings.customModelFriendlyName?.trim()) {
+      modelName = this.settings.customModelFriendlyName.trim();
+    }
+    const providerType = getProviderType(providerId);
+
+    const notice = new Notice(`Using ${providerName} ${modelName}…`, 0);
+    try {
+      const content = await provider.extractTextFromBase64(base64);
+      notice.hide();
+
+      if (content) {
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        const editor = activeView?.editor ?? null;
+
+        const extension = file.extension;
+        const mime = getImageMimeType(file.name);
+
+        const context = buildOCRContext({
+          providerId,
+          providerName,
+          providerType,
+          modelId,
+          modelName,
+          prompt: this.settings.customPrompt,
+          singleImage: {
+            name: file.basename,
+            extension: extension,
+            path: file.path,
+            size: arrayBuffer.byteLength,
+            mime,
+            width: dims?.width,
+            height: dims?.height,
+            base64: base64,
+          },
+        });
+
+        await handleExtractedContent(this, content, editor, context);
+        pluginLogger("Finished processing file via context menu");
+      } else {
+        pluginLog("No content returned from OCR.", "notice", true);
+      }
+    } catch (e) {
+      notice.hide();
+      if (e instanceof Error) {
+        pluginLog(e, "error", true);
+      } else {
+        pluginLog(`OCR failed: ${e}`, "error", true);
+      }
+      pluginLog("Failed to extract text.", "notice", true);
+    }
+  }
+
+  /**
+   * Process a PDF file when no editor is active (creates new note with output)
+   */
+  async processPdfFileToNote(arrayBuffer: ArrayBuffer, file: TFile): Promise<void> {
+    pluginLogger("Processing PDF file to note (no active editor)");
+
+    const notice = new Notice("Converting PDF pages to images...", 0);
+
+    try {
+      const pageImages = await convertPdfToImages(
+        arrayBuffer,
+        this.settings.pdfScale ?? 2.0,
+        this.settings.pdfMaxPages ?? 50
+      );
+
+      if (pageImages.length === 0) {
+        notice.hide();
+        pluginLog("Could not extract any pages from PDF.", "notice", true);
+        return;
+      }
+
+      const provider = this.getProvider();
+      const providerId = this.settings.provider;
+      const modelId = (provider as any).model;
+      const providerName = getFriendlyProviderNames(this.settings)[providerId];
+      let modelName = FRIENDLY_MODEL_NAMES[modelId] || modelId;
+      if (providerId === "ollama" && this.settings.ollamaModelFriendlyName?.trim()) {
+        modelName = this.settings.ollamaModelFriendlyName.trim();
+      } else if (providerId === "lmstudio" && this.settings.lmstudioModelFriendlyName?.trim()) {
+        modelName = this.settings.lmstudioModelFriendlyName.trim();
+      } else if (providerId === "custom" && this.settings.customModelFriendlyName?.trim()) {
+        modelName = this.settings.customModelFriendlyName.trim();
+      }
+      const providerType = getProviderType(providerId);
+
+      notice.setMessage(`Extracting text from ${pageImages.length} PDF page(s) using ${providerName} ${modelName}...`);
+
+      const allText: string[] = [];
+      for (let i = 0; i < pageImages.length; i++) {
+        const page = pageImages[i];
+        notice.setMessage(`Processing page ${i + 1} of ${pageImages.length}...`);
+        const text = await provider.extractTextFromBase64(page.base64);
+        if (text) {
+          allText.push(text);
+        }
+      }
+
+      notice.hide();
+
+      if (allText.length === 0) {
+        pluginLog("No text could be extracted from PDF.", "notice", true);
+        return;
+      }
+
+      const combinedText = allText.length > 1
+        ? allText.join("\n\n---\n\n")
+        : allText[0];
+
+      const context = buildOCRContext({
+        providerId,
+        providerName,
+        providerType,
+        modelId,
+        modelName,
+        prompt: this.settings.customPrompt,
+        singleImage: {
+          name: file.basename,
+          extension: "pdf",
+          path: file.path,
+          size: arrayBuffer.byteLength,
+          mime: "application/pdf",
+          width: pageImages[0]?.width,
+          height: pageImages[0]?.height,
+        },
+      }) as any;
+
+      context.pdf = {
+        pageCount: pageImages.length,
+        totalPages: pageImages.length,
+      };
+
+      await handleExtractedContent(this, combinedText, null, context);
+      pluginLogger(`Finished processing PDF with ${pageImages.length} pages`);
+
+    } catch (err) {
+      notice.hide();
+      if (err instanceof PDFEncryptedError) {
+        pluginLog("Cannot process password-protected PDF.", "notice", true);
+      } else if (err instanceof PDFCorruptedError) {
+        pluginLog("PDF appears to be corrupted or invalid.", "notice", true);
+      } else {
+        pluginLog(`Failed to process PDF: ${err}`, "error", true);
+        pluginLog("Failed to process PDF.", "notice", true);
+      }
+    }
   }
 
 }
