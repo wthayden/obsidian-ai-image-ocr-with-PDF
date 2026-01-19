@@ -6,9 +6,9 @@
 import * as pdfjsLib from "pdfjs-dist";
 import { pluginLog, pluginLogger } from "./log";
 
-// Configure PDF.js worker from CDN
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Disable web worker - process in main thread for reliability in Electron/Obsidian
+// Protocol-relative URLs don't work in Electron (app: protocol)
+pdfjsLib.GlobalWorkerOptions.workerSrc = "";
 
 export interface PDFPageImage {
   pageNumber: number;
