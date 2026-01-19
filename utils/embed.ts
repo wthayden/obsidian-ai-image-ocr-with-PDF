@@ -15,7 +15,7 @@ export function findRelevantImageEmbed(editor: Editor): {
   embedType: "internal" | "external";
   embedText: string;
 } | null {
-  const imageExt = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+  const imageExt = /\.(png|jpe?g|gif|webp|bmp|svg|pdf)$/i;
 
   const isImage = (link: string) => imageExt.test(link);
 

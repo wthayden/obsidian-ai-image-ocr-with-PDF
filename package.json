@@ -19,6 +19,9 @@
   "author": "Rootiest",
   "license": "MIT",
   "type": "commonjs",
+  "dependencies": {
+    "pdfjs-dist": "^4.0.379"
+  },
   "devDependencies": {
     "@types/node": "^24.0.3",
     "esbuild": "^0.25.5",

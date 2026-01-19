@@ -51,6 +51,10 @@ export interface GPTImageOCRSettings {
   batchImageFooterTemplate: string; // Optional footer for each image in batch
   batchFooterTemplate: string;
 
+  // PDF processing settings
+  pdfScale: number; // Rendering scale (1.0-4.0), default 2.0 = ~144 DPI
+  pdfMaxPages: number; // Maximum pages to process, default 50
+
   ollamaModelFriendlyName?: string;
   lmstudioModelFriendlyName?: string;
   customModelFriendlyName?: string;
@@ -123,6 +127,10 @@ export const DEFAULT_SETTINGS: GPTImageOCRSettings = {
   batchImageHeaderTemplate: "",
   batchImageFooterTemplate: "",
   batchFooterTemplate: "",
+
+  // PDF processing settings
+  pdfScale: 2.0,
+  pdfMaxPages: 50,
 
   ollamaModelFriendlyName: "",
   lmstudioModelFriendlyName: "",

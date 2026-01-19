@@ -43,7 +43,14 @@ import {
   selectImageFile,
   selectFolder,
   getImageMimeType,
+  isPdfFile,
 } from "./utils/image";
+import {
+  convertPdfToImages,
+  isPdfBuffer,
+  PDFEncryptedError,
+  PDFCorruptedError,
+} from "./utils/pdf";
 import { GPTImageOCRSettingTab } from "./settings-tab";
 import { pluginLog, pluginLogger, setDebugMode } from "./utils/log";
 
@@ -176,6 +183,13 @@ export default class GPTImageOCRPlugin extends Plugin {
           pluginLog("Could not read image data.", "notice", true);
           return;
         }
+
+        // Check if it's a PDF and process accordingly
+        if (isPdfFile(link) || isPdfBuffer(arrayBuffer)) {
+          await this.processPdfFile(arrayBuffer, link, editor, ctx);
+          return;
+        }
+
         const base64 = arrayBufferToBase64(arrayBuffer);
         const dims = await getImageDimensionsFromArrayBuffer(arrayBuffer);
 
@@ -505,6 +519,116 @@ Repeat this for each image.
       notice.hide();
       pluginLog("Failed to extract text from images.", "notice", true);
       pluginLog(e instanceof Error ? e : `OCR failed: ${e}`, "error", true);
+    }
+  }
+
+  /**
+   * Process a PDF file for OCR by converting pages to images and extracting text
+   */
+  async processPdfFile(
+    arrayBuffer: ArrayBuffer,
+    link: string,
+    editor: Editor,
+    ctx: MarkdownView | MarkdownFileInfo
+  ): Promise<void> {
+    pluginLogger("Processing PDF file for OCR");
+
+    const notice = new Notice("Converting PDF pages to images...", 0);
+
+    try {
+      // Convert PDF pages to images
+      const pageImages = await convertPdfToImages(
+        arrayBuffer,
+        this.settings.pdfScale ?? 2.0,
+        this.settings.pdfMaxPages ?? 50
+      );
+
+      if (pageImages.length === 0) {
+        notice.hide();
+        pluginLog("Could not extract any pages from PDF.", "notice", true);
+        return;
+      }
+
+      const provider = this.getProvider();
+      const providerId = this.settings.provider;
+      const modelId = (provider as any).model;
+      const providerName = getFriendlyProviderNames(this.settings)[providerId];
+      let modelName = FRIENDLY_MODEL_NAMES[modelId] || modelId;
+      if (providerId === "ollama" && this.settings.ollamaModelFriendlyName?.trim()) {
+        modelName = this.settings.ollamaModelFriendlyName.trim();
+      } else if (providerId === "lmstudio" && this.settings.lmstudioModelFriendlyName?.trim()) {
+        modelName = this.settings.lmstudioModelFriendlyName.trim();
+      } else if (providerId === "custom" && this.settings.customModelFriendlyName?.trim()) {
+        modelName = this.settings.customModelFriendlyName.trim();
+      }
+      const providerType = getProviderType(providerId);
+
+      notice.setMessage(`Extracting text from ${pageImages.length} PDF page(s) using ${providerName} ${modelName}...`);
+
+      // Extract text from each page
+      const allText: string[] = [];
+      for (let i = 0; i < pageImages.length; i++) {
+        const page = pageImages[i];
+        notice.setMessage(`Processing page ${i + 1} of ${pageImages.length}...`);
+
+        const text = await provider.extractTextFromBase64(page.base64);
+        if (text) {
+          allText.push(text);
+        }
+      }
+
+      notice.hide();
+
+      if (allText.length === 0) {
+        pluginLog("No text could be extracted from PDF.", "notice", true);
+        return;
+      }
+
+      // Combine all page text (with page separators for multi-page)
+      const combinedText = allText.length > 1
+        ? allText.join("\n\n---\n\n")
+        : allText[0];
+
+      // Build context for formatting
+      const embedInfo = parseEmbedInfo(`![[${link}]]`, link);
+      const context = buildOCRContext({
+        providerId,
+        providerName,
+        providerType,
+        modelId,
+        modelName,
+        prompt: this.settings.customPrompt,
+        singleImage: {
+          name: embedInfo.name,
+          extension: "pdf",
+          path: embedInfo.path,
+          size: arrayBuffer.byteLength,
+          mime: "application/pdf",
+          width: pageImages[0]?.width,
+          height: pageImages[0]?.height,
+        },
+      }) as any;
+
+      // Add PDF-specific context
+      context.pdf = {
+        pageCount: pageImages.length,
+        totalPages: pageImages.length,
+      };
+      context.embed = embedInfo;
+
+      await handleExtractedContent(this, combinedText, editor ?? null, context);
+      pluginLogger(`Finished processing PDF with ${pageImages.length} pages`);
+
+    } catch (err) {
+      notice.hide();
+      if (err instanceof PDFEncryptedError) {
+        pluginLog("Cannot process password-protected PDF.", "notice", true);
+      } else if (err instanceof PDFCorruptedError) {
+        pluginLog("PDF appears to be corrupted or invalid.", "notice", true);
+      } else {
+        pluginLog(`Failed to process PDF: ${err}`, "error", true);
+        pluginLog("Failed to process PDF.", "notice", true);
+      }
     }
   }
 

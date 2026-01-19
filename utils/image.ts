@@ -25,7 +25,7 @@ export async function collectImageReferences(
     try {
       const normalized = normalizePath(trimmed);
       const file = vault.getAbstractFileByPath(normalized);
-      if (file instanceof TFile && file.extension.match(/png|jpe?g|webp|gif|bmp|svg/i)) {
+      if (file instanceof TFile && file.extension.match(/png|jpe?g|webp|gif|bmp|svg|pdf/i)) {
         collected.push({ source: trimmed, file, isExternal: false });
       }
     } catch (e) {
@@ -134,7 +134,7 @@ export async function selectImageFile(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/*";
+    input.accept = "image/*,application/pdf,.pdf";
     input.onchange = () => {
       const file = input.files?.[0] || null;
       pluginLogger(file ? `Selected file ${file.name}` : "No file selected");
@@ -176,9 +176,16 @@ export function getImageMimeType(fileName: string): string {
       return "image/bmp";
     case "svg":
       return "image/svg+xml";
+    case "pdf":
+      return "application/pdf";
     default:
       return "application/octet-stream";
   }
+}
+
+/** Check if a file is a PDF based on its extension */
+export function isPdfFile(fileName: string): boolean {
+  return /\.pdf$/i.test(fileName);
 }
 
 /**

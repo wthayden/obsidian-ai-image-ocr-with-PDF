@@ -560,6 +560,41 @@ export class GPTImageOCRSettingTab extends PluginSettingTab {
         );
     }
 
+    // --- PDF Processing Settings ---
+    containerEl.createEl("h3", { text: "PDF Processing" });
+
+    new Setting(containerEl)
+      .setName("PDF rendering quality")
+      .setDesc(
+        "Scale factor for rendering PDF pages (1.0 = 72 DPI, 2.0 = 144 DPI, 4.0 = 288 DPI). Higher values produce clearer images but use more memory.",
+      )
+      .addSlider((slider) =>
+        slider
+          .setLimits(1.0, 4.0, 0.5)
+          .setValue(this.plugin.settings.pdfScale)
+          .setDynamicTooltip()
+          .onChange(async (value) => {
+            this.plugin.settings.pdfScale = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Maximum PDF pages")
+      .setDesc(
+        "Maximum number of pages to process from a PDF. Set to 0 for unlimited (not recommended for large PDFs).",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("50")
+          .setValue(String(this.plugin.settings.pdfMaxPages))
+          .onChange(async (value) => {
+            const num = parseInt(value, 10);
+            this.plugin.settings.pdfMaxPages = isNaN(num) ? 50 : Math.max(0, num);
+            await this.plugin.saveSettings();
+          }),
+      );
+
     new Setting(containerEl)
       .setName("Debug mode")
       .setDesc("Enable debug mode to log additional information to the console.")
