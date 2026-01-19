@@ -32,6 +32,7 @@ import {
 } from "./utils/format";
 import {
   findRelevantImageEmbed,
+  findImageEmbedFromCache,
   findImageEmbedInFileContent,
   resolveInternalImagePath,
   parseEmbedInfo,
@@ -154,7 +155,11 @@ export default class GPTImageOCRPlugin extends Plugin {
         const embedMatch = sel.match(/!\[\[.*?\]\]/) || sel.match(/!\[.*?\]\(.*?\)/);
 
         let embed = findRelevantImageEmbed(editor);
-        // Fallback: read raw file content (works in Live Preview mode)
+        // Fallback 1: Use MetadataCache (most reliable for PDFs in Live Preview)
+        if (!embed) {
+          embed = findImageEmbedFromCache(this.app, ctx?.file ?? null);
+        }
+        // Fallback 2: Read raw file content
         if (!embed) {
           embed = await findImageEmbedInFileContent(this.app, ctx?.file ?? null);
         }

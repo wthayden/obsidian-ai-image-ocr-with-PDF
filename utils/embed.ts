@@ -75,8 +75,40 @@ export function findRelevantImageEmbed(editor: Editor): {
 }
 
 /**
+ * Finds the first image/PDF embed using Obsidian's MetadataCache.
+ * This is the most reliable method as it works regardless of editor mode.
+ */
+export function findImageEmbedFromCache(app: App, file: TFile | null): {
+  link: string;
+  isExternal: boolean;
+  embedType: "internal" | "external";
+  embedText: string;
+} | null {
+  if (!file) return null;
+
+  const imageExt = /\.(png|jpe?g|gif|webp|bmp|svg|pdf)$/i;
+  const isImage = (link: string) => imageExt.test(link);
+
+  const cache = app.metadataCache.getFileCache(file);
+  if (!cache?.embeds) return null;
+
+  for (const embed of cache.embeds) {
+    const link = embed.link;
+    if (isImage(link)) {
+      return {
+        link,
+        isExternal: false,
+        embedType: "internal",
+        embedText: embed.original,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Finds the first image/PDF embed by reading the raw file content.
- * Works in Live Preview mode where editor.getLine() may not return raw markdown.
+ * Fallback for when MetadataCache isn't available.
  */
 export async function findImageEmbedInFileContent(app: App, file: TFile | null): Promise<{
   link: string;
