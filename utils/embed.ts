@@ -74,6 +74,43 @@ export function findRelevantImageEmbed(editor: Editor): {
   return null;
 }
 
+/**
+ * Finds the first image/PDF embed by reading the raw file content.
+ * Works in Live Preview mode where editor.getLine() may not return raw markdown.
+ */
+export async function findImageEmbedInFileContent(app: App, file: TFile | null): Promise<{
+  link: string;
+  isExternal: boolean;
+  embedType: "internal" | "external";
+  embedText: string;
+} | null> {
+  if (!file) return null;
+
+  const imageExt = /\.(png|jpe?g|gif|webp|bmp|svg|pdf)$/i;
+  const isImage = (link: string) => imageExt.test(link);
+
+  const content = await app.vault.read(file);
+  const lines = content.split("\n");
+
+  for (const line of lines) {
+    let embedMatch = line.match(/!\[\[(.+?)\]\]/);
+    if (embedMatch) {
+      const link = embedMatch[1].split("|")[0].trim();
+      if (isImage(link)) {
+        return { link, isExternal: false, embedType: "internal", embedText: embedMatch[0] };
+      }
+    }
+    embedMatch = line.match(/!\[.*?\]\((.+?)\)/);
+    if (embedMatch) {
+      const link = embedMatch[1].split(" ")[0].replace(/["']/g, "");
+      if (isImage(link)) {
+        return { link, isExternal: /^https?:\/\//i.test(link), embedType: "external", embedText: embedMatch[0] };
+      }
+    }
+  }
+  return null;
+}
+
 /** Resolve an internal image path from a short link to a TFile using MetadataCache */
 export function resolveInternalImagePath(app: App, link: string, sourcePath: string): TFile | undefined {
   // Use MetadataCache.getFirstLinkpathDest for best match resolution

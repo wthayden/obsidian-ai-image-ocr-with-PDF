@@ -32,6 +32,7 @@ import {
 } from "./utils/format";
 import {
   findRelevantImageEmbed,
+  findImageEmbedInFileContent,
   resolveInternalImagePath,
   parseEmbedInfo,
   templateHasImagePlaceholder,
@@ -152,7 +153,11 @@ export default class GPTImageOCRPlugin extends Plugin {
         const sel = editor.getSelection();
         const embedMatch = sel.match(/!\[\[.*?\]\]/) || sel.match(/!\[.*?\]\(.*?\)/);
 
-        const embed = findRelevantImageEmbed(editor);
+        let embed = findRelevantImageEmbed(editor);
+        // Fallback: read raw file content (works in Live Preview mode)
+        if (!embed) {
+          embed = await findImageEmbedInFileContent(this.app, ctx?.file ?? null);
+        }
         if (!embed) {
           pluginLog("No image embed found.", "notice", true);
           return;
